@@ -1,45 +1,40 @@
-# OAuth 2.0 / OpenID Connect Аутентификация
+# OAuth 2.0 Аутентификация с Яндекс
 
 ## Описание подхода
 
-Эта реализация использует **OAuth 2.0 / OpenID Connect** с Google как Identity Provider. Пользователи аутентифицируются через Google, а ваше приложение получает информацию о пользователе и создает собственную сессию.
+Эта реализация использует **OAuth 2.0** с Яндекс как Identity Provider. Пользователи аутентифицируются через Яндекс, а ваше приложение получает информацию о пользователе и создает собственную сессию.
 
 ### Особенности:
-- **Внешний провайдер**: Google обрабатывает аутентификацию
+- **Внешний провайдер**: Яндекс обрабатывает аутентификацию
 - **Безопасность**: не храните пароли пользователей
-- **Удобство**: пользователи используют существующие аккаунты
-- **Доверие**: Google гарантирует подлинность пользователя
+- **Удобство**: пользователи используют существующие аккаунты Яндекса
+- **Доверие**: Яндекс гарантирует подлинность пользователя
 
 ## Технологии
 
 - **FastAPI** - современный веб-фреймворк
-- **Authlib** - библиотека для OAuth 2.0 / OpenID Connect
+- **httpx** - асинхронный HTTP клиент для работы с Яндекс API
 - **PyJWT** - работа с JSON Web Tokens
 - **SQLite** - база данных пользователей
 
-## Настройка Google OAuth 2.0
+## Настройка Яндекс OAuth 2.0
 
-### 1. Создание проекта в Google Cloud Console
+### 1. Регистрация приложения в Яндекс OAuth
 
-1. Перейдите в [Google Cloud Console](https://console.cloud.google.com/)
-2. Создайте новый проект или выберите существующий
-3. Включите Google+ API (или Google Identity API)
+1. Перейдите на [страницу регистрации приложений Яндекса](https://oauth.yandex.ru/client/new)
+2. Укажите название приложения и выберите платформу "Веб-сервисы"
+3. В поле "Callback URI" укажите URL: `http://localhost:8000/auth/yandex/callback`
+4. Выберите необходимые права доступа:
+   - `login:email` - доступ к email адресу
+   - `login:info` - доступ к основной информации профиля
+5. Сохраните полученные `Client ID` и `Client Secret`
 
-### 2. Настройка OAuth 2.0 credentials
-
-1. Перейдите в "APIs & Services" → "Credentials"
-2. Нажмите "Create Credentials" → "OAuth 2.0 Client IDs"
-3. Выберите "Web application"
-4. Добавьте authorized redirect URIs:
-   - `http://localhost:8000/auth/google/callback` (для разработки)
-   - `https://yourdomain.com/auth/google/callback` (для продакшена)
-
-### 3. Обновление конфигурации
+### 2. Обновление конфигурации
 
 Замените в `main.py`:
 ```python
-GOOGLE_CLIENT_ID = "ваш-client-id"
-GOOGLE_CLIENT_SECRET = "ваш-client-secret"
+YANDEX_CLIENT_ID = "ваш-client-id"
+YANDEX_CLIENT_SECRET = "ваш-client-secret"
 ```
 
 ## Установка и запуск
@@ -57,7 +52,7 @@ venv\Scripts\activate     # Windows
 pip install -r requirements.txt
 ```
 
-3. Настройте Google OAuth 2.0 (см. выше)
+3. Настройте Яндекс OAuth 2.0 (см. выше)
 
 4. Запустите приложение:
 ```bash
@@ -70,8 +65,8 @@ python main.py
 
 ### Веб-интерфейс
 1. Откройте http://localhost:8000
-2. Нажмите "Войти через Google"
-3. Авторизуйтесь в Google
+2. Нажмите "Войти через Яндекс"
+3. Авторизуйтесь в Яндексе
 4. Вы будете перенаправлены обратно в приложение
 5. Используйте кнопки для проверки профиля и выхода
 
@@ -93,39 +88,39 @@ curl -X POST http://localhost:8000/logout
 - **JWT подпись**: токены подписываются секретным ключом
 - **Время жизни токенов**: access токен действует 24 часа
 - **HTTPS**: в продакшене обязательно используйте HTTPS
-- **Валидация**: проверка токенов от Google
-- **Отзыв токенов**: возможность отозвать токены через Google
+- **Валидация**: проверка токенов от Яндекса
+- **Отзыв токенов**: возможность отозвать токены через Яндекс
 
 ## Архитектура
 
 ```
 Клиент (Браузер)
-    ↓ перенаправление на Google
-Google OAuth 2.0
+    ↓ перенаправление на Яндекс
+Яндекс OAuth 2.0
     ↓ callback с кодом авторизации
 FastAPI приложение
     ↓ обмен кода на токен + получение данных пользователя
-Google API
+Яндекс API
     ↓ сохранение/получение пользователя
 SQLite (пользователи)
 ```
 
 ## OAuth 2.0 Flow
 
-1. **Authorization Request**: клиент перенаправляется на Google
-2. **User Authorization**: пользователь авторизуется в Google
-3. **Authorization Grant**: Google возвращает код авторизации
+1. **Authorization Request**: клиент перенаправляется на Яндекс
+2. **User Authorization**: пользователь авторизуется в Яндексе
+3. **Authorization Grant**: Яндекс возвращает код авторизации
 4. **Access Token Request**: приложение обменивает код на access токен
 5. **Protected Resource**: приложение получает данные пользователя
 6. **Local Session**: создается локальная сессия с JWT токеном
 
-## Преимущества OAuth 2.0
+## Преимущества OAuth 2.0 с Яндекс
 
 1. **Безопасность**: не храните пароли пользователей
-2. **Удобство**: пользователи используют существующие аккаунты
-3. **Доверие**: провайдер гарантирует подлинность
-4. **Стандартизация**: открытый стандарт
-5. **Масштабируемость**: легко добавить других провайдеров
+2. **Удобство**: пользователи используют существующие аккаунты Яндекса
+3. **Доверие**: Яндекс гарантирует подлинность
+4. **Стандартизация**: открытый стандарт OAuth 2.0
+5. **Русскоязычная аудитория**: популярность Яндекса в России
 
 ## Недостатки
 
@@ -141,19 +136,13 @@ SQLite (пользователи)
 Можно легко добавить поддержку других OAuth 2.0 провайдеров:
 
 ```python
-# GitHub OAuth 2.0
-github_oauth = OAuth2(
-    client_id="your-github-client-id",
-    client_secret="your-github-client-secret",
-    scope="user:email"
-)
+# VK OAuth 2.0
+VK_CLIENT_ID = "your-vk-app-id"
+VK_CLIENT_SECRET = "your-vk-app-secret"
 
-# Facebook OAuth 2.0
-facebook_oauth = OAuth 2(
-    client_id="your-facebook-app-id",
-    client_secret="your-facebook-app-secret",
-    scope="email"
-)
+# Mail.ru OAuth 2.0
+MAILRU_CLIENT_ID = "your-mailru-app-id"
+MAILRU_CLIENT_SECRET = "your-mailru-app-secret"
 ```
 
 ### Объединение аккаунтов
@@ -175,14 +164,14 @@ CREATE TABLE user_oauth_accounts (
 Для продакшена используйте переменные окружения:
 
 ```bash
-export GOOGLE_CLIENT_ID="your-client-id"
-export GOOGLE_CLIENT_SECRET="your-client-secret"
+export YANDEX_CLIENT_ID="your-client-id"
+export YANDEX_CLIENT_SECRET="your-client-secret"
 export SECRET_KEY="your-secret-key"
 ```
 
 И обновите код:
 ```python
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+YANDEX_CLIENT_ID = os.getenv("YANDEX_CLIENT_ID")
+YANDEX_CLIENT_SECRET = os.getenv("YANDEX_CLIENT_SECRET")
 SECRET_KEY = os.getenv("SECRET_KEY")
 ```

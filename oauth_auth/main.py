@@ -1,38 +1,37 @@
 """
-OAuth 2.0 / OpenID Connect аутентификация с Google
-Использует стороннего провайдера для аутентификации
+OAuth 2.0 аутентификация с Яндекс
+Использует Яндекс как Identity Provider
 """
 
 from fastapi import FastAPI, HTTPException, Depends, status, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from authlib.integrations.fastapi_oauth2 import GoogleOAuth2
-from authlib.integrations.fastapi_oauth2 import OAuth2
 from pydantic import BaseModel
 import sqlite3
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 import jwt
+import httpx
+import urllib.parse
 
 app = FastAPI(title="OAuth 2.0 Authentication", version="1.0.0")
 
-# Конфигурация OAuth 2.0
-GOOGLE_CLIENT_ID = "your-google-client-id"  # Замените на ваш Client ID
-GOOGLE_CLIENT_SECRET = "your-google-client-secret"  # Замените на ваш Client Secret
+# Конфигурация OAuth 2.0 для Яндекса
+YANDEX_CLIENT_ID = "your-yandex-client-id"  # Замените на ваш Client ID
+YANDEX_CLIENT_SECRET = "your-yandex-client-secret"  # Замените на ваш Client Secret
 SECRET_KEY = "your-secret-key-change-in-production"  # В продакшене используйте переменную окружения
 
-# Настройка Google OAuth 2.0
-google_oauth = GoogleOAuth2(
-    client_id=GOOGLE_CLIENT_ID,
-    client_secret=GOOGLE_CLIENT_SECRET,
-    scope="openid email profile"
-)
+# URLs для Яндекс OAuth 2.0
+YANDEX_AUTH_URL = "https://oauth.yandex.ru/authorize"
+YANDEX_TOKEN_URL = "https://oauth.yandex.ru/token"
+YANDEX_USER_INFO_URL = "https://login.yandex.ru/info"
+REDIRECT_URI = "http://localhost:8000/auth/yandex/callback"
 
 # Схемы данных
 class UserResponse(BaseModel):
     id: int
-    google_id: str
+    yandex_id: str
     email: str
     name: str
     picture: Optional[str]
@@ -50,7 +49,7 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            google_id TEXT UNIQUE NOT NULL,
+            yandex_id TEXT UNIQUE NOT NULL,
             email TEXT NOT NULL,
             name TEXT NOT NULL,
             picture TEXT,
@@ -60,18 +59,18 @@ def init_db():
     conn.commit()
     conn.close()
 
-def get_or_create_user(google_user_info: dict) -> tuple:
-    """Получение или создание пользователя из Google данных"""
-    google_id = google_user_info.get('sub')
-    email = google_user_info.get('email')
-    name = google_user_info.get('name')
-    picture = google_user_info.get('picture')
+def get_or_create_user(yandex_user_info: dict) -> tuple:
+    """Получение или создание пользователя из Яндекс данных"""
+    yandex_id = yandex_user_info.get('id')
+    email = yandex_user_info.get('default_email')
+    name = yandex_user_info.get('real_name', yandex_user_info.get('display_name', ''))
+    picture = yandex_user_info.get('default_avatar_id')
     
     conn = sqlite3.connect('oauth_users.db')
     cursor = conn.cursor()
     
     # Проверяем, существует ли пользователь
-    cursor.execute('SELECT id, google_id, email, name, picture, created_at FROM users WHERE google_id = ?', (google_id,))
+    cursor.execute('SELECT id, yandex_id, email, name, picture, created_at FROM users WHERE yandex_id = ?', (yandex_id,))
     user = cursor.fetchone()
     
     if user:
@@ -80,15 +79,15 @@ def get_or_create_user(google_user_info: dict) -> tuple:
     
     # Создаем нового пользователя
     cursor.execute('''
-        INSERT INTO users (google_id, email, name, picture) 
+        INSERT INTO users (yandex_id, email, name, picture) 
         VALUES (?, ?, ?, ?)
-    ''', (google_id, email, name, picture))
+    ''', (yandex_id, email, name, picture))
     
     conn.commit()
     user_id = cursor.lastrowid
     conn.close()
     
-    return (user_id, google_id, email, name, picture, datetime.now().isoformat())
+    return (user_id, yandex_id, email, name, picture, datetime.now().isoformat())
 
 def create_access_token(user_id: int) -> str:
     """Создание access токена для авторизованного пользователя"""
@@ -150,12 +149,12 @@ def read_root():
     </head>
     <body>
         <h1>OAuth 2.0 Аутентификация</h1>
-        <h2>Вход через Google</h2>
+        <h2>Вход через Яндекс</h2>
         
         <div id="messages"></div>
         
         <div id="login-section">
-            <a href="/auth/google" class="google-btn">Войти через Google</a>
+            <a href="/auth/yandex" class="google-btn">Войти через Яндекс</a>
         </div>
         
         <div id="user-section" style="display: none;">
@@ -198,7 +197,7 @@ def read_root():
             
             async function checkProfile() {
                 if (!accessToken) {
-                    showMessage('Сначала войдите через Google', 'error');
+                    showMessage('Сначала войдите через Яндекс', 'error');
                     return;
                 }
                 
@@ -224,7 +223,7 @@ def read_root():
                 showMessage('Выход выполнен!', 'success');
             }
             
-            // Обработка callback от Google
+            // Обработка callback от Яндекс
             const urlParams = new URLSearchParams(window.location.search);
             const token = urlParams.get('token');
             if (token) {
@@ -239,35 +238,85 @@ def read_root():
     """
     return html
 
-@app.get("/auth/google")
-async def google_auth():
-    """Инициация OAuth 2.0 flow с Google"""
-    redirect_uri = "http://localhost:8000/auth/google/callback"
-    return await google_oauth.authorize_redirect(redirect_uri)
+@app.get("/auth/yandex")
+async def yandex_auth():
+    """Инициация OAuth 2.0 flow с Яндекс"""
+    params = {
+        'response_type': 'code',
+        'client_id': YANDEX_CLIENT_ID,
+        'redirect_uri': REDIRECT_URI,
+        'scope': 'login:email login:info'
+    }
+    
+    auth_url = f"{YANDEX_AUTH_URL}?{urllib.parse.urlencode(params)}"
+    return RedirectResponse(url=auth_url)
 
-@app.get("/auth/google/callback")
-async def google_callback(request: Request):
-    """Обработка callback от Google"""
+@app.get("/auth/yandex/callback")
+async def yandex_callback(request: Request):
+    """Обработка callback от Яндекса"""
     try:
-        token = await google_oauth.authorize_access_token(request)
-        user_info = token.get('userinfo')
-        
-        if not user_info:
+        code = request.query_params.get('code')
+        if not code:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Не удалось получить информацию о пользователе"
+                detail="Отсутствует код авторизации"
             )
+        
+        # Обмен кода на access токен
+        async with httpx.AsyncClient() as client:
+            token_data = {
+                'grant_type': 'authorization_code',
+                'code': code,
+                'client_id': YANDEX_CLIENT_ID,
+                'client_secret': YANDEX_CLIENT_SECRET,
+                'redirect_uri': REDIRECT_URI,
+            }
+            
+            token_response = await client.post(
+                YANDEX_TOKEN_URL,
+                data=token_data,
+                headers={'Content-Type': 'application/x-www-form-urlencoded'}
+            )
+            
+            if token_response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Не удалось получить access токен"
+                )
+            
+            token_info = token_response.json()
+            access_token = token_info.get('access_token')
+            
+            if not access_token:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Access токен не найден в ответе"
+                )
+            
+            # Получение информации о пользователе
+            user_response = await client.get(
+                YANDEX_USER_INFO_URL,
+                headers={'Authorization': f'OAuth {access_token}'}
+            )
+            
+            if user_response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Не удалось получить информацию о пользователе"
+                )
+            
+            user_info = user_response.json()
         
         # Получаем или создаем пользователя
         user = get_or_create_user(user_info)
-        user_id, google_id, email, name, picture, created_at = user
+        user_id, yandex_id, email, name, picture, created_at = user
         
         # Создаем access токен
-        access_token = create_access_token(user_id)
+        jwt_token = create_access_token(user_id)
         
         # Перенаправляем на главную страницу с токеном
         return RedirectResponse(
-            url=f"/?token={access_token}",
+            url=f"/?token={jwt_token}",
             status_code=status.HTTP_302_FOUND
         )
         
@@ -283,7 +332,7 @@ def get_profile(current_user: int = Depends(get_current_user)):
     conn = sqlite3.connect('oauth_users.db')
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT id, google_id, email, name, picture, created_at 
+        SELECT id, yandex_id, email, name, picture, created_at 
         FROM users WHERE id = ?
     ''', (current_user,))
     user = cursor.fetchone()
@@ -295,10 +344,10 @@ def get_profile(current_user: int = Depends(get_current_user)):
             detail="Пользователь не найден"
         )
     
-    user_id, google_id, email, name, picture, created_at = user
+    user_id, yandex_id, email, name, picture, created_at = user
     return UserResponse(
         id=user_id,
-        google_id=google_id,
+        yandex_id=yandex_id,
         email=email,
         name=name,
         picture=picture,
@@ -315,13 +364,14 @@ def logout():
 if __name__ == "__main__":
     import uvicorn
     init_db()
-    print("Запуск сервера OAuth 2.0 аутентификации...")
+    print("Запуск сервера OAuth 2.0 аутентификации с Яндекс...")
     print("Откройте http://localhost:8000 в браузере")
     print("API документация: http://localhost:8000/docs")
-    print("\nВАЖНО: Настройте Google OAuth 2.0:")
-    print("1. Перейдите в Google Cloud Console")
-    print("2. Создайте проект и включите Google+ API")
-    print("3. Создайте OAuth 2.0 credentials")
-    print("4. Добавьте redirect URI: http://localhost:8000/auth/google/callback")
-    print("5. Обновите GOOGLE_CLIENT_ID и GOOGLE_CLIENT_SECRET в коде")
+    print("\nВАЖНО: Настройте Яндекс OAuth 2.0:")
+    print("1. Перейдите на https://oauth.yandex.ru/client/new")
+    print("2. Создайте новое приложение")
+    print("3. Выберите платформу 'Веб-сервисы'")
+    print("4. Добавьте redirect URI: http://localhost:8000/auth/yandex/callback")
+    print("5. Выберите права доступа: login:email, login:info")
+    print("6. Обновите YANDEX_CLIENT_ID и YANDEX_CLIENT_SECRET в коде")
     uvicorn.run(app, host="0.0.0.0", port=8000)
