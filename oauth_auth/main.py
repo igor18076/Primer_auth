@@ -22,8 +22,8 @@ app = FastAPI(title="OAuth 2.0 Authentication", version="1.0.0")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Конфигурация OAuth 2.0 для Яндекса
-YANDEX_CLIENT_ID = "fb6efaea36d04c5aba30d35ad1a1c356"  # Замените на ваш Client ID
-YANDEX_CLIENT_SECRET = "dffc6353d31549b3ae881b5c1fbb9097"  # Замените на ваш Client Secret
+YANDEX_CLIENT_ID = "your-secret-key-change-in-production"  # Замените на ваш Client ID
+YANDEX_CLIENT_SECRET = "your-secret-key-change-in-production"  # Замените на ваш Client Secret
 SECRET_KEY = "your-secret-key-change-in-production"  # В продакшене используйте переменную окружения
 
 # URLs для Яндекс OAuth 2.0
