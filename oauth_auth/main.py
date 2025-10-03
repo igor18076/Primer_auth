@@ -6,16 +6,20 @@ OAuth 2.0 аутентификация с Яндекс
 from fastapi import FastAPI, HTTPException, Depends, status, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import sqlite3
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import jwt
 import httpx
 import urllib.parse
 
 app = FastAPI(title="OAuth 2.0 Authentication", version="1.0.0")
+
+# Монтирование статических файлов
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Конфигурация OAuth 2.0 для Яндекса
 YANDEX_CLIENT_ID = "fb6efaea36d04c5aba30d35ad1a1c356"  # Замените на ваш Client ID
@@ -169,6 +173,8 @@ def read_root():
         
         <script>
             let accessToken = null;
+            let isLoading = false;
+            let userData = null;
             
             function showMessage(message, type) {
                 const div = document.createElement('div');
@@ -179,11 +185,12 @@ def read_root():
             }
             
             function showUserInfo(user) {
-                document.getElementById('profile-pic').src = user.picture || '/static/default-avatar.png';
+                document.getElementById('profile-pic').src = user.picture || '/static/default-avatar.svg';
                 document.getElementById('user-name').textContent = user.name;
                 document.getElementById('user-email').textContent = user.email;
                 document.getElementById('login-section').style.display = 'none';
                 document.getElementById('user-section').style.display = 'block';
+                userData = user; // Кешируем данные пользователя
             }
             
             // Проверяем, есть ли токен в localStorage
@@ -201,23 +208,44 @@ def read_root():
                     return;
                 }
                 
-                const response = await fetch('/profile', {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                });
-                const result = await response.json();
-                if (response.ok) {
-                    showUserInfo(result);
-                    showMessage(`Добро пожаловать, ${result.name}!`, 'info');
-                } else {
-                    showMessage(result.detail, 'error');
-                    localStorage.removeItem('access_token');
-                    accessToken = null;
+                // Предотвращаем повторные запросы
+                if (isLoading) {
+                    return;
+                }
+                
+                // Если данные уже загружены, показываем их
+                if (userData) {
+                    showUserInfo(userData);
+                    return;
+                }
+                
+                isLoading = true;
+                
+                try {
+                    const response = await fetch('/profile', {
+                        headers: { 'Authorization': `Bearer ${accessToken}` }
+                    });
+                    const result = await response.json();
+                    if (response.ok) {
+                        showUserInfo(result);
+                        showMessage(`Добро пожаловать, ${result.name}!`, 'info');
+                    } else {
+                        showMessage(result.detail, 'error');
+                        localStorage.removeItem('access_token');
+                        accessToken = null;
+                        userData = null;
+                    }
+                } catch (error) {
+                    showMessage('Ошибка загрузки профиля', 'error');
+                } finally {
+                    isLoading = false;
                 }
             }
             
             async function logout() {
                 localStorage.removeItem('access_token');
                 accessToken = null;
+                userData = null;
                 document.getElementById('login-section').style.display = 'block';
                 document.getElementById('user-section').style.display = 'none';
                 showMessage('Выход выполнен!', 'success');
